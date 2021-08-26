@@ -1,0 +1,398 @@
+---
+title: "**Market Segmentation Duo Lingo Interview **"
+author: "Brian Chirn"
+date: '`r Sys.Date()`'
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+    code_folding: hide
+    theme: cosmo
+    highlight: tango
+---
+# Introduction
+The goal of this market segmentation is to develop user segments or "personas" to inform future marketing efforts and product development. This analysis will use an unsupervised machine learning approach to cluster the users into distinct personas. Unsupervised clustering allows for a data driveway to infer structure within the data, aka clusters. The distinct clusters generated can then be interpreted to understand how Duolingo users might be similar or different from each other. Because many of the survey data was collected as categorical variables, this analysis will use a Kmodes clustering algorithm, some numerical data was converted into categories as Kmodes can only handle categorical variables. Kmodes works by iteratively comparing the similarity of each new point k centroids. The new data point is then clustered with the cluster that it is most like, and a new centroid is calculated. The distance between cluster and new point is measured by dissimilarity (total mismatches between data points). 
+
+
+
+# Data source
+User survey and usage data from Duolingo.
+The survey asked users a series of questions about demographics (e.g., country, age, employment status), and motivation (e.g., primary reason for studying a language). 
+The goal of this survey was to develop user segments (or personas) to inform future marketing efforts and product development. 
+Usage data was collected from August 1, 2018 to November 5, 2018. 
+
+# EDA Summary
+EDA data analysis revealed a significant portion (57%) of the daily goal values were NAs. Decided to drop this column to preserve as much data as possible.
+Over 50% of users from (MX, FR, JP, RU) have a purchased subscription. Interestingly these 4 countries also have the lowest percentage of users in the 0-10,000 salary range, high number of lessons completed. However, for other variables such has commitment, employment status, and age is less clear to see a difference from these geographies. 
+Additional we found those we purchase the subscription also use the app more.
+
+# Results (3 Personas)
+High Value Customer. 
+-	Most likely to purchase a subscription.
+-	Very active with Duolingo app
+-	Very committed to learning
+-	High proportion of retirees
+-	Generally, older (55 – 74). 
+-	Generally, earn more 
+-	Mixed language proficiency
+
+New Language Students
+-	Least likely to purchase a subscription
+-	Generally younger (18-34)
+-	Most earn less than 10k
+-	Learning a language for the first time
+-	Highest probability of being a student or unemployed
+
+Working Adult Reviewer
+-	Reviewing a language they have studied before 
+-	Generally middle age (35 – 54)
+-	Generally earning $26k – $75k
+-	Most likely to take a placement test
+-	Highest employment rate
+
+
+Recommendations for product changes and marketing campaigns
+-	High Value Customer. 
+o	Consider developing a loyalty and referral program targeted for this group. Highlight referral scheme, as word of mouth is the best way to win new customers
+o	Have dedicated service representatives if they have issues
+-	New Language Students
+o	Young, group of new language learns. Consider targeting campaigns that will expose them to multiple new languages to help them discover one that interest them.
+o	Appeal to young people’s desire to experience new languages with travel marketing campaigns focus on travel
+-	Working Adult Review
+o	Most likely to review an old language, target notifications and marketing campaigns of relearning an old language. 
+o	Most likely to be working a job, consider sending notifications after work.
+ 
+
+
+
+# Key Visualizations
+
+```{r setup, include = FALSE}
+# Load libraries and data
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2) # plotting
+library(klaR) # kmodes clustering
+library(plotly) # 3d plotting
+library(reshape2)
+
+
+setwd("/Users/brian/Documents/Duolingo/")
+df_survey = read.csv(file = "survey_data.csv", header = TRUE)
+df_usage = read.csv(file = "survey_users_app_usage.csv", header = TRUE)
+
+
+
+```
+
+## Data pre-processing. 
+Daily has more than 50% of values as NAs. 
+Choose to remove this feature
+
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+# Examining missing values. 
+
+t <- as.data.frame(colSums(is.na(df_usage))*100/nrow(df_usage)) # seems like daily_goal contributes most to the NAs, consider dropping this column
+colnames(t) <- "percentage_of_NA"
+ggplot(t, aes(x = percentage_of_NA, y = rownames(t)))+ geom_point()
+
+```
+
+## Data pre-processing. 
+Longest_streak has a group of individuals with abnormally high longest_streaks. This could be a technical issue with how the data was collected
+Choose to remove this abnormal group.
+Other features such as n_lessons_started and n_days_on_platform look as we expect
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+# summary(df_survey)
+#summary(df_usage) #longest_streak looks weird because the mean is significantly larger than the median...
+ggplot(df_usage, aes(x = longest_streak)) +geom_histogram() # clearly outliers, we expect a smoother curve, removing 
+
+df_usage <- df_usage[ , -which(names(df_usage) %in% c("daily_goal"))]
+df_usage <- df_usage[df_usage$longest_streak < 4000,]
+
+ggplot(df_usage, aes(x = n_lessons_started)) +geom_histogram()
+ggplot(df_usage, aes(x = n_days_on_platform)) +geom_histogram()
+
+
+# Convert start_date to date format
+df_usage$duolingo_start_date <- format(as.POSIXct(df_usage$duolingo_start_date,format='%m/%d/%Y %H:%M'),format='%m/%d/%y')
+df_usage$duolingo_start_date <- as.Date(df_usage$duolingo_start_date, "%m/%d/%y")
+
+```
+
+## Data pre-processing. 
+What is the distribution of time spent completing the survey? We do not want survey results that are inaccurate. 
+Histogram of time spent on survey. Choose to remove users who did not spend at least 100 seconds (log10(2)) filling out the survey.
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+ggplot(df_survey, aes(x = log10(time_spent_seconds)))+ geom_histogram() # most users complete the survey in log10 (2) and log10(3) seconds (2 - 16 minutes)
+
+# Deciding to only use survey data from users who spent more than 100 seconds on the survey, 6187 users -> 5915
+df_survey <- df_survey[df_survey$time_spent_seconds > 100,]
+
+```
+
+## Exploratory data analysis.
+As expeted those who purchase a subscription are more active. 
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+ggplot(df_usage, aes(x = as.factor(purchased_subscription), y = n_active_days)) + geom_boxplot()
+
+
+```
+
+Heatmap shows number of active days, lessons started, lessons_completed, and highest crown count seem to correlate with each other. And an overall trend that most of these app usage features are positively correleated with each other
+```{r}
+# Check correlations. In order to check correlations, we  1 hot encode the categorical variables purchased_subscription and took_placement_test
+df_usage$purchased_subscription <- as.integer(as.logical(df_usage$purchased_subscription))
+df_usage$took_placement_test <- as.integer(as.logical(df_usage$took_placement_test))
+
+df_corr <- df_usage[,c("highest_course_progress", "took_placement_test", "purchased_subscription", "highest_crown_count",
+                       "n_active_days","n_lessons_started","n_lessons_completed","longest_streak","n_days_on_platform")]
+df_corr <- na.omit(df_corr)
+
+### Get lower triangle of the correlation matrix
+cormat <- round(x = cor(df_corr), digits = 2)
+get_lower_tri<-function(cormat){
+  cormat[upper.tri(cormat)] <- NA
+  return(cormat)
+}
+### Get upper triangle of the correlation matrix
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+
+upper_tri <- get_upper_tri(cormat)
+upper_tri
+
+### Melt
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+### Heatmap
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+```
+
+
+## Exploratory data analysis
+MX, FR, JP and RU have extremely high rates of subscription payments. Their users also share high levels of commitment to learning the language and have the same age profiles (relatively high proportion of 55-74 year olds)
+These 4 countries are all non-english native speaking. 
+Denmark (DE) is another non-english speaking country with similar age demographics and high levels of commitment, but despite this, has a proportion of subscribes. 
+DE market could be a un-tapped market.
+One strategy could to be lower the cost for subscriptionsi in Denmark to ease the point of entry
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+# data cleaning to plot
+total <- merge(df_survey,df_usage, by = "user_id")
+
+total$annual_income = factor(total$annual_income, levels = c("$0 - $10,000", 
+                                               "$11,000 - $25,000", 
+                                               "$26,000 - $75,000", 
+                                               "$76,000 - $150,000",
+                                               "$151,000 or more"))
+total$country = factor(total$country, levels = c("CO","TW", "BR", "US",
+                                         "GB","DE","MX","FR","JP","RU")) # set factor based on percentage of users who subcribe ranked by country
+total$n_lessons_completed_cat <- (as.numeric(cut_number(total$n_lessons_completed,3))) #splits n_lessons_completed into 3 categorical variables, 1-83 days, 84-249, and 249+, this can be interpreted as low, medium, and high number of lessons completed
+total$n_lessons_completed_cat <- as.factor(total$n_lessons_completed_cat) # convert variable to factors
+
+
+total <- na.omit(total)
+
+```
+
+
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+ggplot(total, aes(x = country, fill = as.factor(purchased_subscription )))  + geom_bar(position = "fill")
+
+ggplot(total, aes(x = country, fill = as.factor(primary_language_commitment )))  + geom_bar(position = "fill")
+ggplot(total, aes(x = country, fill = as.factor(age)))  + geom_bar(position = "fill")
+
+```
+
+Denmark users have much few 151k+ earners compared to MX, FR, JP and RU. Consider lowing the subscription cost in this region. 
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+ggplot(total, aes(x = country, fill = as.factor(annual_income )))  + geom_bar(position = "fill")
+
+```
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+# wealth
+
+
+#ggplot(total, aes(x = country, fill = as.factor(duolingo_platform )))  + geom_bar(position = "fill")
+#ggplot(total, aes(x = country, fill = as.factor(employment_status )))  + geom_bar(position = "fill")
+
+
+# eagerness
+
+#ggplot(total, aes(x = country, fill = as.factor(purchased_subscription )))  + geom_bar(position = "fill")
+#ggplot(total, aes(x = country, fill = as.factor(primary_language_commitment )))  + geom_bar(position = "fill")
+#ggplot(total, aes(x = country, fill = (n_lessons_completed_cat )))  + geom_bar(position = "fill")
+
+# starting skill
+#ggplot(total, aes(x = country, fill = as.factor(primary_language_review )))  + geom_bar(position = "fill")
+#ggplot(total, aes(x = country, fill = as.factor(primary_language_proficiency )))  + geom_bar(position = "fill")
+#ggplot(total, aes(x = country, fill = as.factor(took_placement_test )))  + geom_bar(position = "fill")
+
+```
+
+
+## Kmodes clustering
+Most of the survey data is categorical data, let's use k-modes to cluster them. 
+The goal of this clustering is to identify certain groups within the data set.
+First we build our data frame and then use an elbow plot to determin the optimal number k clusters.
+From the elbow plot we select 3.
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+### Creating dataset with only categorical variables
+
+keeps <- c("age", "annual_income", "employment_status",
+           "student", "duolingo_subscriber", "primary_language_commitment", 
+           "primary_language_review", "primary_language_proficiency", 
+           "took_placement_test",
+           "n_lessons_completed_cat","purchased_subscription")
+df_cat <- total[,keeps]
+
+set.seed(2)
+
+### eblow plot for identifying for optimal K
+rm(cost)
+cost <- c()
+num_K = (1:5)
+for (x in num_K){
+  k <- kmodes(df_cat, x, iter.max = 10000)
+  cost <- append(cost, sum(k$withindiff))
+}
+rm(p)
+p <- cbind(Num_of_Clusters = 1:5, cost)
+p <- as.data.frame(p)
+ggplot(p, aes(x = Num_of_Clusters, y = cost)) +geom_point()
+```
+
+The modes of our clusters
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+
+k <- kmodes(df_cat, 3, iter.max = 1000)
+k$modes
+total$cluster <- factor(k$cluster, levels = c(3,1,2))
+
+```
+
+Radar chart summarizes the key attributes of each cluster. 
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+library(ggradar)
+library(dplyr)
+library(scales)
+library(tibble)
+library(scales)
+
+
+
+total$is_student <- ifelse(total$student == "Not currently a student", 0, 1)
+total$full_time <- ifelse(total$employment_status == "Employed full-time", 1, 0)
+total$is_retired <- ifelse(total$employment_status == "Retired", 1, 0)
+total$gender <- ifelse(total$gender == "Male", 1, 0)
+total$less_than_10k <- ifelse(total$annual_income == "$0 - $10,000", 1, 0)
+total$more_than_150k <- ifelse(total$annual_income == "$151,000 or more", 1, 0)
+total$review_old_lang <- ifelse(total$primary_language_review == "I am using Duolingo to review a language I've studied before.", 1, 0)
+total$learning_new_lang <- ifelse(total$primary_language_review == "I am using Duolingo to learn this language for the first time.", 1, 0)
+total$very_committed <- ifelse(total$primary_language_commitment == "I'm very committed to learning this language.", 1, 0)
+total$young_age <- ifelse(total$age ==  "18-34" | total$age ==  "Under 18" , 1, 0)
+total$middle_age <- ifelse(total$age ==  "35 - 54", 1, 0)
+total$older_age <- ifelse(total$age ==  "55 - 74" | total$age ==  "75 or older" , 1, 0)
+by_cluster  <- total%>%group_by(cluster)%>%mutate(Percentage=(purchased_subscription/sum(purchased_subscription)*100))
+
+by_cluster$Percentage <-as.numeric(as.character(by_cluster$Percentage))
+k_radar <- by_cluster %>% summarise( 
+  IsSubscribed = sum(purchased_subscription)/nrow(total),
+  n_lessons_completed = mean(n_lessons_completed),
+  n_active_days = mean(n_active_days),
+
+  IsRetired = sum(is_retired),
+  Committed = sum(very_committed), 
+  OldAge = sum(older_age),
+  FullTime = sum(full_time),
+  ReviewOldLang = sum(review_old_lang),
+
+  IsStudent = sum(is_student),
+  YoungAge = sum(young_age),
+
+  LessThan10k = sum(less_than_10k),
+  LearnNewLang = sum(learning_new_lang),
+  MoreThan150k = sum(more_than_150k)
+  
+)
+
+#k_radar$cluster <- c("High Value Retiree", "New Language Student", "Working Adult Reviewer")
+k_radar %>% mutate_at(vars(-cluster),rescale) %>% ggradar()
+
+```
+
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+library(stringr)
+total_cl <- total
+total_cl$cluster2 <- NA
+for( x in 1:nrow(total_cl)){
+ if (total_cl[x,"cluster"]== 3){
+  total_cl[x,"cluster2"] <- "High Value Customer"
+ }
+  if (total_cl[x,"cluster"] == 1){
+  total_cl[x,"cluster2"] <- "Working Adult Reviewer"
+  }
+    if (total_cl[x,"cluster"]== 2){
+  total_cl[x,"cluster2"] <- "New Language Student"
+ }
+ 
+}
+  
+  
+
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = as.factor(purchased_subscription))) + geom_bar(position = "fill") + theme(axis.text.x=element_text(angle=30, hjust=1))
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = age)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = annual_income)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = as.factor(country))) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+
+```
+
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = as.factor(took_placement_test))) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = primary_language_commitment)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = employment_status)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = age)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+
+
+
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = primary_language_proficiency)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+ggplot(total_cl, aes(x = as.factor(cluster2), fill = primary_language_review)) + geom_bar(position = "fill")+ theme(axis.text.x=element_text(angle=30, hjust=1))
+```
+
+
+
+
+3d plots wiht plotly shows our 3 clusters with course progress, purchased_subscription, and active days
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+library(plotly)
+fig <- plot_ly(total, x = ~highest_course_progress, y = ~purchased_subscription, 
+               z = ~n_active_days, color = ~cluster)
+fig
+
+```
+
+
+
